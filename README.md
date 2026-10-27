@@ -20,7 +20,8 @@ sets, field-level security and sharing on every call.
 | Diagram | [Keycloak](docs/diagrams/h360-obo-sequence.png) | [Entra](docs/diagrams/h360-obo-sequence-entra.png) |
 
 Full walkthrough, every setting, the permissions model and troubleshooting:
-**[docs/h360-obo-flow.md](docs/h360-obo-flow.md)**.
+**[docs/h360-obo-flow.md](docs/h360-obo-flow.md)**. To share the demo with others:
+**[docs/demo-guide.md](docs/demo-guide.md)** (5 minutes, no install, no passwords in it).
 
 ---
 
@@ -32,6 +33,7 @@ Full walkthrough, every setting, the permissions model and troubleshooting:
 | [`salesforce/classes/KeycloakOboTokenExchangeHandler.cls`](salesforce/classes/KeycloakOboTokenExchangeHandler.cls) | Apex token exchange handler: validates the IdP token (JWKS, `iss`, `aud`, `azp`, Entra `scp`) and picks the Salesforce user |
 | [`scripts/setup-keycloak.sh`](scripts/setup-keycloak.sh) | creates the Keycloak realm `h360-obo`, client `h360-mcp-client`, mappers and demo user |
 | [`scripts/kc.sh`](scripts/kc.sh) | Keycloak admin REST helper used by the setup script |
+| [`scripts/reset-demo.py`](scripts/reset-demo.py) | removes opportunities created from the demo page and restores the seed amounts (dry run unless `--apply`) |
 | [`scripts/test-obo.py`](scripts/test-obo.py) | end-to-end test: Keycloak login → token exchange → H360, directly or `--via-gateway=<URL>` |
 | [`local-demo/app.py`](local-demo/app.py) | the first, Python-only version of the demo app (localhost:8790) |
 | [`docs/`](docs/) | flow document and sequence diagrams (`.mmd` sources, `.png`, `.svg`) |
@@ -116,13 +118,27 @@ post-logout URI `https://<app-host>/`).
 
 ---
 
+## Demo personas
+
+| Login | Salesforce user | Profile / permissions | Shareable |
+|---|---|---|---|
+| Keycloak `h360-demo-user`, Entra `H360DemoUser` | **H360 Demo User** | Standard User: reads all opportunities, edits its own | ✔ yes |
+| Keycloak `h360-demo-manager` | **H360 Demo Manager** | Standard User + permission set *H360 Demo Opportunity Manager* (View/Modify All on **Opportunity** only) | ✔ yes |
+| Keycloak `chiew-lee`, Entra `H360DemoAdmin` | **Chiew Lee** | System Administrator | ✖ no, presenter only |
+
+All three Salesforce users have the *H360 MCP App Access* permission set (approved for the app).
+Share the two non-admin logins with [docs/demo-guide.md](docs/demo-guide.md); send passwords
+separately, never in the repo.
+
 ## Running the demo
 
 1. Open the app, **Log in with Keycloak / Microsoft Entra ID** as the demo user.
 2. **Top 3 opportunities**: the page says which Salesforce user ran the query.
 3. **Try edit** a deal owned by someone else → ✖ *Insufficient Privileges*; your own → ✔ allowed.
 4. **Create opportunity** → *Created By* / *Owner* = the signed-in user.
-5. Log out, log in as the admin user, repeat: the same calls are now allowed.
+5. Log out, log in as `h360-demo-manager`, repeat: the same calls are now allowed.
+
+Reset the data afterwards: `python3 scripts/reset-demo.py` (dry run), then `--apply`.
 
 Scripted check (Keycloak, direct grant):
 ```bash
@@ -141,8 +157,8 @@ secret as a sensitive policy field.
 | Credential | Local file (mode 600) | Used by |
 |---|---|---|
 | Keycloak admin | `~/.config/keycloak-sandbox-clee/admin` | `scripts/kc.sh` |
-| Keycloak demo users | `~/.config/keycloak-sandbox-clee/{h360-demo-user,chiew-lee}` | `scripts/test-obo.py`, manual login |
-| Salesforce External Client App | `~/.config/sprawl-scanner/salesforce_connected_app` | `scripts/test-obo.py`, gateway OBO policy |
+| Keycloak demo users | `~/.config/keycloak-sandbox-clee/{h360-demo-user,h360-demo-manager,chiew-lee}` | `scripts/test-obo.py`, manual login |
+| Salesforce External Client App | `~/.config/sprawl-scanner/salesforce_connected_app` | `scripts/test-obo.py`, `scripts/reset-demo.py`, gateway OBO policy |
 | Entra client secret | `~/.config/entra-h360-obo/client_secret` | `idp.clientSecret` on the Entra deployment |
 
 A [gitleaks](https://github.com/gitleaks/gitleaks) pre-commit hook blocks commits containing

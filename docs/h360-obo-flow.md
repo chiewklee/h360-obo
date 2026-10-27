@@ -156,7 +156,7 @@ Admin console: `https://keycloak-1792182140.web.cloud-services.demos.mulesoft.co
 | Post-logout redirect URIs | `https://h360-obo-demo-ky9yvn.aqopru.usa-e1.cloudhub.io/`, `http://localhost:*`, `http://127.0.0.1:*` |
 | Mapper `aud-h360` | audience mapper, adds `h360-mcp` to `aud` |
 | Mapper `sf_username` | user attribute `sf_username` into the access and ID tokens |
-| Users | `h360-demo-user` → `h360-demo-user.ef2c09d411b9d5@example.com` (H360 Demo User); `chiew-lee` → `trailsignup.ef2c09d411b9d5@salesforce.com` (Chiew Lee) |
+| Users | `h360-demo-user` → `h360-demo-user.ef2c09d411b9d5@example.com` (H360 Demo User); `h360-demo-manager` → `h360-demo-manager.ef2c09d411b9d5@example.com` (H360 Demo Manager); `chiew-lee` → `trailsignup.ef2c09d411b9d5@salesforce.com` (Chiew Lee) |
 
 Recreate with `scripts/setup-keycloak.sh` (admin helper `scripts/kc.sh`). Passwords live in
 `~/.config/keycloak-sandbox-clee/` (owner-only files), not in the repo.
@@ -184,6 +184,7 @@ MCP server uses it. Don't add JWT Validation there.
 | External Client App **Gemini MCP POC** | **Token Exchange Flow on**; client credentials flow also on (run-as Chiew Lee, used by other tools); scope includes `mcp_api` |
 | Permitted users | **Admin approved users are pre-authorized**, via permission set **`H360 MCP App Access`** (assigned to Chiew Lee and H360 Demo User) |
 | Demo user | **H360 Demo User**, profile Standard User, no password (only reachable through the exchange) |
+| Demo manager | **H360 Demo Manager**, Standard User + permission set **H360 Demo Opportunity Manager** (View/Modify All on Opportunity only) |
 | Opportunity sharing | org-wide default **Public Read Only** |
 | Opportunity Layout | Account *mobile card* removed (H360 treated Account as read-only because of it) |
 
