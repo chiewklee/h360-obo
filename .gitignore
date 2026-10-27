@@ -1,0 +1,18 @@
+# build output and IDE state
+target/
+mule-app/.mule/
+mule-app/.tooling-project/
+.vscode/
+__pycache__/
+*.pyc
+.DS_Store
+*.jar
+
+# never commit credentials (they live in ~/.config/... and Runtime Manager secured properties)
+.env
+*.env
+*secret*
+*credential*
+*.pem
+*.key
+!.github/workflows/secret-scan.yml

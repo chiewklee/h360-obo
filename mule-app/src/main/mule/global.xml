@@ -1,0 +1,28 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+    <configuration-properties file="config.yaml" />
+
+    <!-- CloudHub 2.0 terminates TLS at the ingress and forwards plain HTTP to 8081 -->
+    <http:listener-config name="httpListener">
+        <http:listener-connection host="0.0.0.0" port="${http.port}" />
+    </http:listener-config>
+
+    <!-- Identity provider token endpoint: requests use the full idp.tokenUrl -->
+    <http:request-config name="idp" />
+
+    <http:request-config name="h360Gateway" basePath="${h360.gatewayPath}">
+        <http:request-connection protocol="HTTPS" host="${h360.gatewayHost}" port="443" />
+    </http:request-config>
+
+    <!-- Login sessions: tokens never reach the browser, only an HttpOnly session cookie.
+         In memory on purpose (one replica; Object Store v2 is not used in clee-inc-ps). -->
+    <os:object-store name="sessions" persistent="false" maxEntries="1000"
+                     entryTtl="8" entryTtlUnit="HOURS" expirationInterval="10" expirationIntervalUnit="MINUTES" />
+</mule>

@@ -1,0 +1,26 @@
+http:
+  port: "8081"
+
+# Identity provider. Defaults are the Keycloak realm; the Entra deployment overrides these with
+# Runtime Manager properties. idp.clientSecret is only needed for a confidential client (Entra):
+# set it as a Secured property on the deployment, never here.
+idp:
+  label: "Keycloak"
+  detail: "Keycloak realm h360-obo"
+  authorizeUrl: "https://keycloak-1792182140.web.cloud-services.demos.mulesoft.com/realms/h360-obo/protocol/openid-connect/auth"
+  tokenUrl: "https://keycloak-1792182140.web.cloud-services.demos.mulesoft.com/realms/h360-obo/protocol/openid-connect/token"
+  logoutUrl: "https://keycloak-1792182140.web.cloud-services.demos.mulesoft.com/realms/h360-obo/protocol/openid-connect/logout"
+  clientId: "h360-mcp-client"
+  scope: "openid profile email"
+  # where the IdP returns after logout; must be allowed by the IdP
+  postLogoutPath: "/"
+
+# Omni Gateway route with JWT Validation + OAuth 2.0 OBO Credential Injection in front of H360
+h360:
+  gatewayHost: "my-flex-gateway-ky9yvn.aqopru.usa-e1.cloudhub.io"
+  gatewayPath: "/sfdc-headless-360-obo"
+  apiVersion: "v66.0"
+
+demo:
+  # Opportunities created in the demo go on this account (Acme)
+  accountId: "001gL00001ZIzoMQAT"

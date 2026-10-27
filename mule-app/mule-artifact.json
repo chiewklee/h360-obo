@@ -1,0 +1,7 @@
+{
+    "name": "h360-obo-demo",
+    "minMuleVersion": "4.12.0",
+    "javaSpecificationVersions": [
+        "17"
+    ]
+}

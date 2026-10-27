@@ -1,0 +1,46 @@
+%%{init: {"theme": "base", "themeVariables": {
+  "fontFamily": "Salesforce Sans, Arial, sans-serif", "fontSize": "15px",
+  "actorBkg": "#032D60", "actorTextColor": "#FFFFFF", "actorBorder": "#032D60", "actorLineColor": "#C9C9C9",
+  "signalColor": "#014486", "signalTextColor": "#181818",
+  "noteBkgColor": "#F3F3F3", "noteBorderColor": "#0176D3", "noteTextColor": "#181818",
+  "activationBkgColor": "#1B96FF", "activationBorderColor": "#0176D3",
+  "sequenceNumberColor": "#FFFFFF", "labelBoxBkgColor": "#0176D3", "labelTextColor": "#FFFFFF", "loopTextColor": "#014486"
+}}}%%
+sequenceDiagram
+    autonumber
+    participant U as User<br/>(browser)
+    participant A as Demo app<br/>(Mule, CloudHub 2.0)
+    participant K as Keycloak<br/>(realm h360-obo)
+    participant G as Omni Gateway<br/>/sfdc-headless-360-obo
+    participant T as Salesforce token endpoint<br/>+ Apex token exchange handler
+    participant H as H360 MCP server
+    participant S as Salesforce REST API
+
+    rect rgb(243, 243, 243)
+    Note over U,K: Login: OIDC authorization code + PKCE
+    U->>A: Log in with Keycloak
+    A->>U: 302 to Keycloak /auth (code_challenge, state)
+    U->>K: username + password
+    K->>U: 302 to app /callback?code=…
+    U->>A: /callback?code=…
+    A->>K: POST /token (code + code_verifier)
+    K-->>A: Keycloak access token<br/>(sf_username, aud h360-mcp, 30 min)
+    Note over A: Token kept server-side.<br/>Browser only gets an HttpOnly session cookie.
+    end
+
+    rect rgb(232, 243, 252)
+    Note over U,S: Every action: Top 3 / Create / Try edit / Delete
+    U->>A: click an action
+    A->>G: MCP tools/call<br/>Authorization: Bearer <Keycloak token>
+    Note over G: Policy 1 (inbound): JWT Validation<br/>signature via Keycloak JWKS, aud, exp<br/>invalid → 401/403, stops here
+    G->>T: Policy 2 (outbound) OBO: RFC 8693 token exchange<br/>subject_token = Keycloak token<br/>client = Gemini MCP POC
+    Note over T: Apex handler: verify token (JWKS, iss, aud, azp)<br/>sf_username → Salesforce User<br/>user approved for the app?
+    T-->>G: Salesforce access token for that user (mcp_api)
+    G->>H: same MCP request<br/>Authorization: Bearer <Salesforce token>
+    H->>S: REST call as that user
+    Note over S: Salesforce applies the user's profile, permission sets,<br/>field-level security, sharing and page layout automatically
+    S-->>H: result or "Insufficient Privileges"
+    H-->>G: MCP result
+    G-->>A: MCP result
+    A-->>U: results + "Salesforce ran this as <user>"
+    end

@@ -1,0 +1,46 @@
+%%{init: {"theme": "base", "themeVariables": {
+  "fontFamily": "Salesforce Sans, Arial, sans-serif", "fontSize": "15px",
+  "actorBkg": "#032D60", "actorTextColor": "#FFFFFF", "actorBorder": "#032D60", "actorLineColor": "#C9C9C9",
+  "signalColor": "#014486", "signalTextColor": "#181818",
+  "noteBkgColor": "#F3F3F3", "noteBorderColor": "#0176D3", "noteTextColor": "#181818",
+  "activationBkgColor": "#1B96FF", "activationBorderColor": "#0176D3",
+  "sequenceNumberColor": "#FFFFFF", "labelBoxBkgColor": "#0176D3", "labelTextColor": "#FFFFFF", "loopTextColor": "#014486"
+}}}%%
+sequenceDiagram
+    autonumber
+    participant U as User<br/>(browser)
+    participant A as Demo app h360-obo-demo-entra<br/>(Mule, CloudHub 2.0)
+    participant K as Microsoft Entra ID<br/>(tenant chiewleemulesoft)
+    participant G as Omni Gateway<br/>/sfdc-headless-360-obo-entra
+    participant T as Salesforce token endpoint<br/>+ Apex token exchange handler
+    participant H as H360 MCP server
+    participant S as Salesforce REST API
+
+    rect rgb(243, 243, 243)
+    Note over U,K: Login: OIDC authorization code + PKCE
+    U->>A: Log in with Microsoft Entra ID
+    A->>U: 302 to Entra /oauth2/v2.0/authorize<br/>(scope api://…/access_as_user, code_challenge, state)
+    U->>K: Microsoft sign-in (password, MFA, conditional access)
+    K->>U: 302 to app /callback?code=…
+    U->>A: /callback?code=…
+    A->>K: POST /oauth2/v2.0/token<br/>(code + code_verifier + client secret)
+    K-->>A: Entra v2 access token<br/>(oid, scp access_as_user, aud = app client ID, ~60–90 min)
+    Note over A: Token kept server-side.<br/>Browser only gets an HttpOnly session cookie.
+    end
+
+    rect rgb(232, 243, 252)
+    Note over U,S: Every action: Top 3 / Create / Try edit / Delete
+    U->>A: click an action
+    A->>G: MCP tools/call<br/>Authorization: Bearer <Entra token>
+    Note over G: Policy 1 (inbound): JWT Validation<br/>signature via Entra JWKS, aud = app client ID, exp<br/>invalid → 401/403, stops here
+    G->>T: Policy 2 (outbound) OBO: RFC 8693 token exchange<br/>subject_token = Entra token<br/>client = Gemini MCP POC
+    Note over T: Apex handler (Entra issuer): verify token (JWKS, iss, aud, azp)<br/>scp must include access_as_user (app-only tokens refused)<br/>oid → User.FederationIdentifier · user approved for the app?
+    T-->>G: Salesforce access token for that user (mcp_api)
+    G->>H: same MCP request<br/>Authorization: Bearer <Salesforce token>
+    H->>S: REST call as that user
+    Note over S: Salesforce applies the user's profile, permission sets,<br/>field-level security, sharing and page layout automatically
+    S-->>H: result or "Insufficient Privileges"
+    H-->>G: MCP result
+    G-->>A: MCP result
+    A-->>U: results + "Salesforce ran this as <user>"
+    end

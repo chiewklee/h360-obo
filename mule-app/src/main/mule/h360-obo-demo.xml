@@ -1,0 +1,412 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<mule xmlns="http://www.mulesoft.org/schema/mule/core"
+      xmlns:doc="http://www.mulesoft.org/schema/mule/documentation"
+      xmlns:ee="http://www.mulesoft.org/schema/mule/ee/core"
+      xmlns:http="http://www.mulesoft.org/schema/mule/http"
+      xmlns:os="http://www.mulesoft.org/schema/mule/os"
+      xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+      xsi:schemaLocation="http://www.mulesoft.org/schema/mule/core http://www.mulesoft.org/schema/mule/core/current/mule.xsd
+        http://www.mulesoft.org/schema/mule/ee/core http://www.mulesoft.org/schema/mule/ee/core/current/mule-ee.xsd
+        http://www.mulesoft.org/schema/mule/http http://www.mulesoft.org/schema/mule/http/current/mule-http.xsd
+        http://www.mulesoft.org/schema/mule/os http://www.mulesoft.org/schema/mule/os/current/mule-os.xsd">
+
+    <!--
+      H360 On-Behalf-Of demo.
+        Login at the identity provider (Keycloak or Entra ID; OIDC auth code + PKCE)  ->  Omni Gateway
+        (JWT Validation + OAuth 2.0 OBO Credential Injection)  ->  Salesforce H360 MCP,
+        which runs every call as the signed-in user. This app holds no Salesforce credentials.
+    -->
+
+    <!-- ============================================================ web -->
+
+    <flow name="page">
+        <http:listener config-ref="httpListener" path="/" allowedMethods="GET">
+            <http:response statusCode="200">
+                <http:headers>#[{"Cache-Control": "no-store"}]</http:headers>
+            </http:response>
+        </http:listener>
+        <flow-ref name="session-load" />
+        <ee:transform doc:name="Render page">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output text/plain
+fun esc(s) = (s default "") replace "&" with "&amp;" replace "<" with "&lt;" replace ">" with "&gt;" replace "\"" with "&quot;"
+var page = readUrl("classpath://web/index.html", "text/plain")
+var c = vars.session.claims
+var who = if (c != null)
+    "<div class='who'><span class='ok'>✔ Signed in</span> <b>" ++ esc(c.name default c.preferred_username) ++ "</b>"
+      ++ " <span class='muted'>(" ++ esc(c.preferred_username) ++ " · " ++ esc(p('idp.detail')) ++ ")</span>"
+      ++ " <a class='btn ghost' href='/logout'>Log out</a></div>"
+  else
+    "<div class='who'><span class='muted'>Not signed in.</span> <a class='btn' href='/login'>Log in with " ++ esc(p('idp.label')) ++ "</a></div>"
+---
+page replace "{{IDP}}" with esc(p('idp.label')) replace "{{WHO}}" with who replace "{{HIDDEN}}" with (if (c != null) "" else "hidden")]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        <set-payload value="#[payload]" mimeType="text/html; charset=UTF-8" />
+    </flow>
+
+    <!-- ============================================================ login at the identity provider -->
+
+    <flow name="login">
+        <http:listener config-ref="httpListener" path="/login" allowedMethods="GET">
+            <http:response statusCode="302">
+                <http:headers>#[vars.outHeaders]</http:headers>
+            </http:response>
+        </http:listener>
+        <flow-ref name="base-url" />
+        <ee:transform doc:name="New session with PKCE">
+            <ee:variables>
+                <ee:set-variable variableName="login"><![CDATA[%dw 2.0
+import toBase64 from dw::core::Binaries
+import hashWith from dw::Crypto
+output application/java
+fun b64url(b) = toBase64(b) replace "+" with "-" replace "/" with "_" replace "=" with ""
+var verifier = (uuid() ++ uuid() ++ uuid()) replace "-" with ""
+---
+{
+    sid: (uuid() ++ uuid()) replace "-" with "",
+    state: uuid(),
+    verifier: verifier,
+    challenge: b64url(hashWith(verifier as Binary {encoding: "UTF-8"}, "SHA-256"))
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <os:store key="#[vars.login.sid]" objectStore="sessions">
+            <os:value><![CDATA[#[output application/java --- {state: vars.login.state, verifier: vars.login.verifier}]]]></os:value>
+        </os:store>
+        <ee:transform doc:name="Redirect to the identity provider">
+            <ee:variables>
+                <ee:set-variable variableName="outHeaders"><![CDATA[%dw 2.0
+import * from dw::core::URL
+output application/java
+var q = {
+    client_id: p('idp.clientId'), response_type: "code", scope: p('idp.scope'),
+    redirect_uri: vars.baseUrl ++ "/callback", state: vars.login.state,
+    code_challenge: vars.login.challenge, code_challenge_method: "S256", prompt: "login"
+}
+---
+{
+    Location: p('idp.authorizeUrl') ++ "?"
+        ++ ((q pluck ((v, k) -> encodeURIComponent(k as String) ++ "=" ++ encodeURIComponent(v))) joinBy "&"),
+    "Set-Cookie": "sid=" ++ vars.login.sid ++ "; HttpOnly; SameSite=Lax; Path=/" ++ (if (vars.baseUrl startsWith "https") "; Secure" else "")
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <set-payload value="" />
+    </flow>
+
+    <flow name="callback">
+        <http:listener config-ref="httpListener" path="/callback" allowedMethods="GET">
+            <http:response statusCode="#[vars.httpStatus default 302]">
+                <http:headers>#[vars.outHeaders default {}]</http:headers>
+            </http:response>
+            <http:error-response statusCode="#[vars.httpStatus default 400]">
+                <http:body>#[payload]</http:body>
+            </http:error-response>
+        </http:listener>
+        <set-variable variableName="query" value="#[attributes.queryParams]" />
+        <flow-ref name="base-url" />
+        <flow-ref name="session-load" />
+        <choice doc:name="State matches?">
+            <when expression="#[vars.query.code == null and vars.query.error == null]">
+                <set-variable variableName="outHeaders" value="#[{Location: '/'}]" />
+                <set-payload value="" />
+            </when>
+            <when expression="#[vars.session.state == null or vars.query.state != vars.session.state or vars.query.code == null]">
+                <set-variable variableName="httpStatus" value="#[400]" />
+                <set-payload value="#['Login failed or expired: ' ++ (vars.query.error default 'state mismatch') ++ '. &lt;a href=&quot;/&quot;&gt;Start again&lt;/a&gt;']" mimeType="text/html" />
+                <set-variable variableName="outHeaders" value="#[{}]" />
+            </when>
+            <otherwise>
+                <http:request config-ref="idp" method="POST" url="#[p('idp.tokenUrl')]" doc:name="Code for tokens (PKCE)">
+                    <http:body><![CDATA[#[output application/x-www-form-urlencoded --- {
+                        grant_type: "authorization_code", client_id: p('idp.clientId'), code: vars.query.code,
+                        redirect_uri: vars.baseUrl ++ "/callback", code_verifier: vars.session.verifier
+                    } ++ (if (isEmpty(p('idp.clientSecret'))) {} else {client_secret: p('idp.clientSecret')})]]]></http:body>
+                </http:request>
+                <ee:transform doc:name="Session with tokens">
+                    <ee:variables>
+                        <ee:set-variable variableName="newSession"><![CDATA[%dw 2.0
+import fromBase64 from dw::core::Binaries
+import repeat from dw::core::Strings
+output application/java
+// Received directly from the identity provider over TLS: decoding for display is enough; the gateway
+// validates the signature on every H360 call.
+fun claims(jwt) = do {
+    var part = (jwt splitBy ".")[1] replace "-" with "+" replace "_" with "/"
+    var padded = part ++ repeat("=", if ((sizeOf(part) mod 4) == 0) 0 else 4 - (sizeOf(part) mod 4))
+    ---
+    read(fromBase64(padded), "application/json")
+}
+---
+{
+    access_token: payload.access_token,
+    id_token: payload.id_token,
+    claims: claims(payload.access_token) filterObject ((v, k) -> ["name", "preferred_username", "sf_username", "exp"] contains (k as String))
+}]]></ee:set-variable>
+                    </ee:variables>
+                </ee:transform>
+                <os:store key="#[vars.sid]" objectStore="sessions">
+                    <os:value>#[vars.newSession]</os:value>
+                </os:store>
+                <set-variable variableName="outHeaders" value="#[{Location: '/'}]" />
+                <set-payload value="" />
+            </otherwise>
+        </choice>
+    </flow>
+
+    <flow name="logout">
+        <http:listener config-ref="httpListener" path="/logout" allowedMethods="GET">
+            <http:response statusCode="302">
+                <http:headers>#[vars.outHeaders]</http:headers>
+            </http:response>
+        </http:listener>
+        <flow-ref name="base-url" />
+        <flow-ref name="session-load" />
+        <choice>
+            <when expression="#[vars.sid != null and vars.session.claims != null]">
+                <os:remove key="#[vars.sid]" objectStore="sessions" />
+            </when>
+        </choice>
+        <ee:transform doc:name="Redirect to the identity provider logout">
+            <ee:variables>
+                <ee:set-variable variableName="outHeaders"><![CDATA[%dw 2.0
+import * from dw::core::URL
+output application/java
+var q = {client_id: p('idp.clientId'), post_logout_redirect_uri: vars.baseUrl ++ p('idp.postLogoutPath')}
+    ++ (if (vars.session.id_token != null) {id_token_hint: vars.session.id_token} else {})
+---
+{
+    Location: p('idp.logoutUrl') ++ "?"
+        ++ ((q pluck ((v, k) -> encodeURIComponent(k as String) ++ "=" ++ encodeURIComponent(v))) joinBy "&"),
+    "Set-Cookie": "sid=; Max-Age=0; Path=/"
+}]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+        <set-payload value="" />
+    </flow>
+
+    <!-- ============================================================ API used by the page -->
+
+    <flow name="api-top">
+        <http:listener config-ref="httpListener" path="/api/top" allowedMethods="GET">
+            <http:error-response statusCode="#[vars.httpStatus default 502]"><http:body>#[payload]</http:body></http:error-response>
+        </http:listener>
+        <flow-ref name="require-login" />
+        <flow-ref name="h360-open" />
+        <set-variable variableName="tool" value="#[output application/java --- {name: 'dispatch_readonly', args: {
+            url: '/services/data/' ++ p('h360.apiVersion') ++ '/query', method: 'GET',
+            queryParams: {q: 'SELECT Id, Name, Account.Name, Amount, StageName, CloseDate, Owner.Name FROM Opportunity WHERE Amount != null ORDER BY Amount DESC LIMIT 3'}}}]" />
+        <flow-ref name="h360-tool" target="top" />
+        <flow-ref name="h360-running-as" target="runningAs" />
+        <ee:transform doc:name="Top 3">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    runningAs: vars.runningAs,
+    rows: (vars.top.body.records default []) map {
+        id: $.Id, name: $.Name, account: $.Account.Name, amount: $.Amount,
+        stage: $.StageName, close: $.CloseDate, owner: $.Owner.Name
+    }
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        <error-handler ref="api-errors" />
+    </flow>
+
+    <!-- No-op edit: writes the current Amount back, so nothing changes even when allowed -->
+    <flow name="api-edit">
+        <http:listener config-ref="httpListener" path="/api/edit" allowedMethods="POST">
+            <http:error-response statusCode="#[vars.httpStatus default 502]"><http:body>#[payload]</http:body></http:error-response>
+        </http:listener>
+        <set-variable variableName="oppId" value="#[payload.id as String]" />
+        <flow-ref name="require-login" />
+        <flow-ref name="h360-open" />
+        <set-variable variableName="tool" value="#[output application/java --- {name: 'dispatch_readonly', args: {
+            url: '/services/data/' ++ p('h360.apiVersion') ++ '/query', method: 'GET',
+            queryParams: {q: 'SELECT Name, Amount, Owner.Name FROM Opportunity WHERE Id = \'' ++ (vars.oppId replace /[^a-zA-Z0-9]/ with '') ++ '\''}}}]" />
+        <flow-ref name="h360-tool" target="current" />
+        <set-variable variableName="rec" value="#[vars.current.body.records[0]]" />
+        <set-variable variableName="tool" value="#[output application/java --- {name: 'dispatch', args: {
+            url: '/services/data/' ++ p('h360.apiVersion') ++ '/sobjects/Opportunity/' ++ (vars.oppId replace /[^a-zA-Z0-9]/ with ''),
+            method: 'PATCH', body: {Amount: vars.rec.Amount}}}]" />
+        <flow-ref name="h360-tool" target="result" />
+        <flow-ref name="h360-running-as" target="runningAs" />
+        <ee:transform doc:name="Allowed or refused">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var ok = [200, 204] contains vars.result.status_code
+---
+{
+    runningAs: vars.runningAs, opportunity: vars.rec.Name, owner: vars.rec.Owner.Name,
+    allowed: ok, status: vars.result.status_code,
+    detail: if (ok) "" else dw::sf::sfError(vars.result)
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        <error-handler ref="api-errors" />
+    </flow>
+
+    <flow name="api-create">
+        <http:listener config-ref="httpListener" path="/api/create" allowedMethods="POST">
+            <http:error-response statusCode="#[vars.httpStatus default 502]"><http:body>#[payload]</http:body></http:error-response>
+        </http:listener>
+        <set-variable variableName="req" value="#[output application/java --- do { var n = trim(payload.name default '') --- {
+            name: if (isEmpty(n)) 'OBO Demo - Live' else if (sizeOf(n) &gt; 120) n[0 to 119] else n,
+            amount: ((payload.amount default '1000000') as String replace /[^0-9.]/ with '') as Number}}]" />
+        <flow-ref name="require-login" />
+        <flow-ref name="h360-open" />
+        <!-- H360 applies the page layout's required fields: Account, Currency, Forecast category -->
+        <set-variable variableName="tool" value="#[output application/java --- {name: 'dispatch', args: {
+            url: '/services/data/' ++ p('h360.apiVersion') ++ '/sobjects/Opportunity', method: 'POST',
+            body: {Name: vars.req.name, Amount: vars.req.amount,
+                   AccountId: p('demo.accountId'), StageName: 'Qualification', ForecastCategoryName: 'Pipeline',
+                   CurrencyIsoCode: 'USD', CloseDate: '2026-12-31',
+                   Description: 'Created live in the H360 OBO demo (' ++ p('idp.label') ++ ' login -> Omni Gateway OBO -> H360 MCP)'}}}]" />
+        <flow-ref name="h360-tool" target="created" />
+        <choice doc:name="Created?">
+            <when expression="#[vars.created.body.id == null]">
+                <raise-error type="APP:SF_REFUSED" description="#['create refused: ' ++ (dw::sf::sfError(vars.created) default 'unknown error')]" />
+            </when>
+        </choice>
+        <set-variable variableName="tool" value="#[output application/java --- {name: 'dispatch_readonly', args: {
+            url: '/services/data/' ++ p('h360.apiVersion') ++ '/query', method: 'GET',
+            queryParams: {q: 'SELECT Name, Amount, Account.Name, Owner.Name, CreatedBy.Name FROM Opportunity WHERE Id = \'' ++ vars.created.body.id ++ '\''}}}]" />
+        <flow-ref name="h360-tool" target="readBack" />
+        <flow-ref name="h360-running-as" target="runningAs" />
+        <ee:transform doc:name="Created record">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var r = vars.readBack.body.records[0]
+---
+{
+    runningAs: vars.runningAs, id: vars.created.body.id, name: r.Name, amount: r.Amount,
+    account: r.Account.Name, owner: r.Owner.Name, createdBy: r.CreatedBy.Name
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        <error-handler ref="api-errors" />
+    </flow>
+
+    <flow name="api-delete">
+        <http:listener config-ref="httpListener" path="/api/delete" allowedMethods="POST">
+            <http:error-response statusCode="#[vars.httpStatus default 502]"><http:body>#[payload]</http:body></http:error-response>
+        </http:listener>
+        <set-variable variableName="oppId" value="#[(payload.id as String) replace /[^a-zA-Z0-9]/ with '']" />
+        <flow-ref name="require-login" />
+        <flow-ref name="h360-open" />
+        <set-variable variableName="tool" value="#[output application/java --- {name: 'dispatch', args: {
+            url: '/services/data/' ++ p('h360.apiVersion') ++ '/sobjects/Opportunity/' ++ vars.oppId, method: 'DELETE'}}]" />
+        <flow-ref name="h360-tool" target="result" />
+        <set-payload value="#[output application/json --- {allowed: [200, 204] contains vars.result.status_code,
+            detail: if ([200, 204] contains vars.result.status_code) '' else dw::sf::sfError(vars.result)}]" />
+        <error-handler ref="api-errors" />
+    </flow>
+
+    <!-- ============================================================ H360 MCP over the OBO gateway -->
+
+    <!-- MCP Streamable HTTP handshake, carrying the user's identity-provider token. The gateway validates
+         it and swaps it for a Salesforce token for the same user before H360 sees the request. -->
+    <sub-flow name="h360-open">
+        <set-variable variableName="mcpId" value="#[0]" />
+        <set-variable variableName="mcpSession" value="#[null]" />
+        <http:request config-ref="h360Gateway" method="POST" path="/" outputMimeType="text/plain; charset=UTF-8" doc:name="MCP initialize">
+            <http:body><![CDATA[#[output application/json --- {jsonrpc: "2.0", id: 0, method: "initialize", params: {
+                protocolVersion: "2025-06-18", capabilities: {}, clientInfo: {name: "h360-obo-demo", version: "1.0.0"}}}]]]></http:body>
+            <http:headers><![CDATA[#[{Authorization: "Bearer " ++ vars.session.access_token, Accept: "application/json, text/event-stream"}]]]></http:headers>
+        </http:request>
+        <set-variable variableName="mcpSession" value="#[attributes.headers['mcp-session-id']]" />
+        <http:request config-ref="h360Gateway" method="POST" path="/" outputMimeType="text/plain; charset=UTF-8" doc:name="MCP notifications/initialized">
+            <http:body><![CDATA[#[output application/json --- {jsonrpc: "2.0", method: "notifications/initialized"}]]]></http:body>
+            <http:headers><![CDATA[#[{Authorization: "Bearer " ++ vars.session.access_token, Accept: "application/json, text/event-stream"}
+                ++ (if (vars.mcpSession != null) {"mcp-session-id": vars.mcpSession} else {})]]]></http:headers>
+        </http:request>
+    </sub-flow>
+
+    <!-- tools/call vars.tool.name with vars.tool.args; payload = {status_code, body} from H360.
+         dw::sf::sfError(result) extracts Salesforce's message when a call was refused. -->
+    <sub-flow name="h360-tool">
+        <set-variable variableName="mcpId" value="#[vars.mcpId + 1]" />
+        <http:request config-ref="h360Gateway" method="POST" path="/" outputMimeType="text/plain; charset=UTF-8" doc:name="MCP tools/call">
+            <http:body><![CDATA[#[output application/json --- {jsonrpc: "2.0", id: vars.mcpId, method: "tools/call",
+                params: {name: vars.tool.name, arguments: vars.tool.args}}]]]></http:body>
+            <http:headers><![CDATA[#[{Authorization: "Bearer " ++ vars.session.access_token, Accept: "application/json, text/event-stream"}
+                ++ (if (vars.mcpSession != null) {"mcp-session-id": vars.mcpSession} else {})]]]></http:headers>
+        </http:request>
+        <ee:transform doc:name="Unwrap tool result">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/java
+// Streamable HTTP answers with plain JSON or an SSE stream ("data: {...}" lines)
+var text = payload as String
+var data = (text splitBy "\n") filter ($ startsWith "data:")
+var msg = if (isEmpty(data)) read(text, "application/json") else read(trim(data[-1][5 to -1]), "application/json")
+---
+if (msg.error != null) { mcpError: msg.error.message default "MCP error" }
+else read(msg.result.content[0].text default "{}", "application/json")]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        <choice>
+            <when expression="#[payload.mcpError != null]">
+                <raise-error type="APP:MCP_ERROR" description="#[payload.mcpError]" />
+            </when>
+        </choice>
+    </sub-flow>
+
+    <!-- Who does Salesforce think we are? -->
+    <sub-flow name="h360-running-as">
+        <set-variable variableName="tool" value="#[output application/java --- {name: 'dispatch_readonly', args: {
+            url: '/services/data/' ++ p('h360.apiVersion') ++ '/chatter/users/me', method: 'GET'}}]" />
+        <flow-ref name="h360-tool" />
+        <set-payload value="#[output application/java --- {name: payload.body.name, username: payload.body.username}]" />
+    </sub-flow>
+
+    <!-- ============================================================ sessions -->
+
+    <sub-flow name="base-url">
+        <set-variable variableName="baseUrl"
+                      value="#[(attributes.headers['x-forwarded-proto'] default 'http') ++ '://' ++ (attributes.headers['x-forwarded-host'] default attributes.headers.host)]" />
+    </sub-flow>
+
+    <!-- vars.sid / vars.session ({} when there is no session) from the sid cookie -->
+    <sub-flow name="session-load">
+        <set-variable variableName="sid" value="#[output application/java ---
+            (((attributes.headers.cookie default '') splitBy ';') map trim($) filter (($ startsWith 'sid=') and (sizeOf($) &gt; 4)) map ($[4 to -1]))[0]]" />
+        <set-variable variableName="session" value="#[{}]" />
+        <choice>
+            <when expression="#[not isEmpty(vars.sid)]">
+                <os:retrieve key="#[vars.sid]" objectStore="sessions" target="session">
+                    <os:default-value>#[{}]</os:default-value>
+                </os:retrieve>
+            </when>
+        </choice>
+    </sub-flow>
+
+    <sub-flow name="require-login">
+        <flow-ref name="session-load" />
+        <choice>
+            <when expression="#[vars.session.access_token == null]">
+                <raise-error type="APP:NOT_LOGGED_IN" description="Not logged in" />
+            </when>
+            <when expression="#[(vars.session.claims.exp default 0) &lt; (now() as Number)]">
+                <raise-error type="APP:NOT_LOGGED_IN" description="Your login session expired. Log out and log in again." />
+            </when>
+        </choice>
+    </sub-flow>
+
+    <error-handler name="api-errors">
+        <on-error-propagate type="APP:NOT_LOGGED_IN">
+            <set-variable variableName="httpStatus" value="#[401]" />
+            <set-payload value="#[output application/json --- {error: error.description}]" />
+        </on-error-propagate>
+        <on-error-propagate>
+            <set-variable variableName="httpStatus" value="#[502]" />
+            <set-payload value="#[output application/json --- {error: error.description default 'H360 call failed'}]" />
+        </on-error-propagate>
+    </error-handler>
+</mule>
