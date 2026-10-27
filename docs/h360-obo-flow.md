@@ -298,7 +298,7 @@ token exchange, H360 and Salesforce's permission checks are unchanged.
 | Demo app | `h360-obo-demo-entra` (same jar, 1.1.0) with `idp.*` Runtime Manager properties; `idp.clientSecret` as a **secured** property |
 | Gateway | API instance `21257802`, path `/sfdc-headless-360-obo-entra`: JWT Validation with Entra JWKS (`.../discovery/v2.0/keys`), `aud` = client ID; OBO policy on the upstream |
 | Apex handler | picks the IdP by issuer; for Entra requires `scp` = `access_as_user` (app-only tokens refused) and maps **`oid` → User.FederationIdentifier** |
-| User mapping | Chiew Lee → `f3628b3b-546e-4755-ba51-2e195e4ad8f0`, H360 Demo User → `6e5aa76d-b14a-4a63-8043-0af9d35d228e` |
+| User mapping | H360 Demo Admin (Entra member user, no admin roles) → Chiew Lee: `8708899b-a674-4165-9b1c-eaf86793d414`, H360 Demo User → `6e5aa76d-b14a-4a63-8043-0af9d35d228e` |
 
 Differences from Keycloak worth knowing: Entra needs a client secret (Web platform), its
 access tokens last ~60–90 minutes, and a guest account signs in at its home organisation
