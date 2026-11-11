@@ -15,6 +15,12 @@
  td{border-bottom:1px solid #F3F3F3;padding:8px} td.num{text-align:right;font-variant-numeric:tabular-nums}
  .runas{margin-top:12px;padding:10px 12px;background:#F3F3F3;border-left:4px solid #0176D3;font-size:14px}
  .hidden{display:none}
+ .tokens{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:12px}
+ .tokens h3{margin:0 0 4px;font-size:15px;color:#014486} .tokens .sub{font-size:12px;color:#747474;margin-bottom:8px}
+ .tokens table{margin-top:4px;font-size:12px} .tokens td{vertical-align:top;word-break:break-all}
+ .tokens td.k{font-family:Menlo,monospace;color:#444;white-space:nowrap;width:1%}
+ tr.hl td{background:#E8F3FC} tr.hl td.k{color:#0176D3;font-weight:bold}
+ .note{font-size:12px;color:#444;margin-top:10px}
  input{font:inherit;padding:6px 8px;border:1px solid #C9C9C9;border-radius:4px}
  .btn.small{padding:4px 10px;font-size:12px;margin-left:4px}
  td .res{display:block;font-size:12px;margin-top:4px}
@@ -25,6 +31,8 @@
  <div class="card">{{WHO}}</div>
  <div class="card {{HIDDEN}}" id="actions">
   <button class="btn" id="top" onclick="loadTop()">Top 3 opportunities</button>
+  <button class="btn ghost" id="tok" onclick="loadTokens()">Show tokens</button>
+  <div id="tokout"></div>
   <div id="out"></div>
  </div>
  <div class="card {{HIDDEN}}">
@@ -66,6 +74,30 @@ async function loadTop(){
             ${o.owner===me ? `<button class="btn ghost small" onclick="del(this,'${o.id}','${esc(o.name)}')">Delete</button>` : ''}
             <span class="res"></span></td></tr>`).join('')}</table>
       <p class="muted">"Try edit" writes the same amount back, so nothing changes even when it is allowed.</p>`;
+  } catch(e){ out.innerHTML = `<p class="bad">✖ ${esc(e.message)}</p>`; }
+  b.disabled = false;
+}
+// Claims that carry the identity across the exchange (highlighted)
+const HL = {idp: ['sub','oid','sf_username','preferred_username','azp','aud','iss'], salesforce: ['sub','client_id','aud','iss','scp']};
+const when = v => (typeof v === 'number' && v > 1e9) ? ' <span class="muted">(' + new Date(v*1000).toLocaleString() + ')</span>' : '';
+function tokenTable(t, kind){
+  const row = ([k,v]) => `<tr class="${HL[kind].includes(k)?'hl':''}"><td class="k">${esc(k)}</td><td>${esc(typeof v==='object'?JSON.stringify(v):v)}${when(v)}</td></tr>`;
+  return `<b class="muted">header</b><table>${Object.entries(t.header||{}).map(row).join('')}</table>
+          <b class="muted">claims</b><table>${Object.entries(t.claims||{}).map(row).join('')}</table>`;
+}
+async function loadTokens(){
+  const b = document.getElementById('tok'), out = document.getElementById('tokout');
+  b.disabled = true; out.innerHTML = '<p class="muted">Asking the gateway to run the OBO exchange…</p>';
+  try {
+    const r = await fetch('/api/tokens'); const d = await r.json(); if (!r.ok) throw new Error(d.error);
+    out.innerHTML = `<div class="tokens">
+      <div><h3>1. Your ${esc(d.idp.label)} token</h3><div class="sub">what the app sends to Omni Gateway</div>${tokenTable(d.idp,'idp')}</div>
+      <div><h3>2. Salesforce token</h3><div class="sub">what the gateway's OBO policy sends to H360</div>${tokenTable(d.salesforce,'salesforce')}</div>
+    </div>
+    <p class="note">The gateway validated token 1, then exchanged it at Salesforce (RFC 8693). Salesforce's token exchange handler
+      mapped <code>sf_username</code> (Keycloak) or <code>oid</code> (Entra) to a Salesforce user, now <code>sub</code> in token 2.
+      Salesforce issues a <b>new</b> token for the app (<code>client_id</code>), so <code>azp</code> and the IdP's other claims are not carried over.
+      Shown decoded, without signatures; the page never receives either raw token.</p>`;
   } catch(e){ out.innerHTML = `<p class="bad">✖ ${esc(e.message)}</p>`; }
   b.disabled = false;
 }

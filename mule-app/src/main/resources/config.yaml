@@ -19,7 +19,14 @@ idp:
 h360:
   gatewayHost: "my-flex-gateway-ky9yvn.aqopru.usa-e1.cloudhub.io"
   gatewayPath: "/sfdc-headless-360-obo"
+  # Demo-only route: same JWT Validation + OBO policies, upstream = this app's /token-echo,
+  # so the page can show the Salesforce token the gateway minted (claims only)
+  inspectPath: "/sfdc-obo-inspect"
   apiVersion: "v66.0"
+
+# Salesforce org whose tokens /token-echo will decode (anything else is refused)
+salesforce:
+  issuer: "https://trailsignup-ef2c09d411b9d5.my.salesforce.com"
 
 demo:
   # Opportunities created in the demo go on this account (Acme)

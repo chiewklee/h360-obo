@@ -305,3 +305,29 @@ Differences from Keycloak worth knowing: Entra needs a client secret (Web platfo
 access tokens last ~60–90 minutes, and a guest account signs in at its home organisation
 (MFA / conditional access apply). Mapping on `oid` is stronger than Keycloak's admin-set
 `sf_username`, since `oid` can't be changed.
+
+---
+
+## 11. Seeing both tokens (demo app *Show tokens*)
+
+The app never holds the Salesforce token, so to display it the gateway has a **demo-only inspect
+route per IdP** with the same JWT Validation + OBO policies, whose upstream is the app's
+`/token-echo` flow:
+
+```
+Show tokens → app /api/tokens ── Bearer <IdP token> ──▶ Omni Gateway /sfdc-obo-inspect(-entra)
+                                                         JWT Validation → OBO exchange (same as the H360 route)
+                                 ◀── header + claims ── app /token-echo  (decodes the injected Salesforce token)
+```
+
+| | IdP token (Keycloak / Entra) | Salesforce token (minted by the OBO policy) |
+|---|---|---|
+| identity | `sf_username` / `oid` (+ `sub`, `preferred_username`) | `sub` = `uid:<Salesforce User Id>` |
+| client | `azp` = `h360-mcp-client` / Entra app ID | `client_id` = External Client App (Gemini MCP POC) |
+| audience | `aud` = `h360-mcp` / Entra app ID | `aud` = My Domain + `https://api.salesforce.com` |
+| scope | – / `scp` = `access_as_user` | `scp` = `refresh_token mcp_api` |
+| lifetime | 30 min (Keycloak) / ~60-90 min (Entra) | 2 h |
+
+Salesforce issues a **new** token for the user and the app (impersonation semantics): `azp`, `act`
+and the IdP's other claims are not carried over. `/token-echo` returns header + claims only and
+refuses tokens whose `iss` isn't the configured org (`salesforce.issuer`).

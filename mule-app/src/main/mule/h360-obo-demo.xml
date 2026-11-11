@@ -308,6 +308,63 @@ var r = vars.readBack.body.records[0]
         <error-handler ref="api-errors" />
     </flow>
 
+    <!-- ============================================================ token inspection (demo only) -->
+
+    <!-- Both tokens of the flow, decoded: the caller's IdP token (from the session) and the
+         Salesforce token the gateway's OBO policy mints for it. The Salesforce one comes back
+         from the gateway's inspect route, whose upstream is /token-echo below. -->
+    <flow name="api-tokens">
+        <http:listener config-ref="httpListener" path="/api/tokens" allowedMethods="GET">
+            <http:error-response statusCode="#[vars.httpStatus default 502]"><http:body>#[payload]</http:body></http:error-response>
+        </http:listener>
+        <flow-ref name="require-login" />
+        <http:request config-ref="gateway" method="GET" path="#[p('h360.inspectPath')]" doc:name="Gateway inspect route (JWT Validation + OBO)">
+            <http:headers><![CDATA[#[{Authorization: "Bearer " ++ vars.session.access_token}]]]></http:headers>
+        </http:request>
+        <ee:transform doc:name="Both tokens">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+---
+{
+    idp: dw::sf::jwtDecode(vars.session.access_token) ++ { label: p('idp.label') },
+    salesforce: payload
+}]]></ee:set-payload>
+            </ee:message>
+        </ee:transform>
+        <error-handler ref="api-errors" />
+    </flow>
+
+    <!-- Upstream of the gateway inspect route: decodes the Authorization header the OBO policy
+         injected and returns header + claims only, never the token or its signature. Refuses
+         anything that isn't a token from the expected Salesforce org. -->
+    <flow name="token-echo">
+        <http:listener config-ref="httpListener" path="/token-echo" allowedMethods="GET">
+            <http:response statusCode="#[vars.httpStatus default 200]" />
+            <http:error-response statusCode="#[vars.httpStatus default 400]"><http:body>#[payload]</http:body></http:error-response>
+        </http:listener>
+        <ee:transform doc:name="Decode Salesforce token">
+            <ee:message>
+                <ee:set-payload><![CDATA[%dw 2.0
+output application/json
+var auth = attributes.headers.authorization default ""
+var token = if (auth startsWith "Bearer ") auth[7 to -1] else ""
+var jwt = dw::sf::jwtDecode(token)
+---
+if ((jwt != null) and (jwt.claims.iss == p('salesforce.issuer'))) jwt
+else { error: "Not a Salesforce token from the expected org" }]]></ee:set-payload>
+            </ee:message>
+            <ee:variables>
+                <ee:set-variable variableName="httpStatus"><![CDATA[%dw 2.0
+output application/java
+var auth = attributes.headers.authorization default ""
+var jwt = dw::sf::jwtDecode(if (auth startsWith "Bearer ") auth[7 to -1] else "")
+---
+if ((jwt != null) and (jwt.claims.iss == p('salesforce.issuer'))) 200 else 403]]></ee:set-variable>
+            </ee:variables>
+        </ee:transform>
+    </flow>
+
     <!-- ============================================================ H360 MCP over the OBO gateway -->
 
     <!-- MCP Streamable HTTP handshake, carrying the user's identity-provider token. The gateway validates

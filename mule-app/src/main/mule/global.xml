@@ -21,6 +21,11 @@
         <http:request-connection protocol="HTTPS" host="${h360.gatewayHost}" port="443" />
     </http:request-config>
 
+    <!-- Same gateway, any route (used for the demo-only token inspect route) -->
+    <http:request-config name="gateway">
+        <http:request-connection protocol="HTTPS" host="${h360.gatewayHost}" port="443" />
+    </http:request-config>
+
     <!-- Login sessions: tokens never reach the browser, only an HttpOnly session cookie.
          In memory on purpose (one replica; Object Store v2 is not used in clee-inc-ps). -->
     <os:object-store name="sessions" persistent="false" maxEntries="1000"

@@ -94,6 +94,13 @@ Set each Keycloak user's `sf_username` attribute to their Salesforce username (a
 
 Keep a separate, policy-free route if other tools send a Salesforce token directly.
 
+**Token inspect routes (demo only).** `/sfdc-obo-inspect` (Keycloak, instance `21291808`) and
+`/sfdc-obo-inspect-entra` (Entra, `21291809`) carry the **same two policies**, but their upstream is
+the demo app's own `/token-echo` flow instead of H360. The page's *Show tokens* button calls them, so
+it can display the Salesforce token the OBO policy really minted (decoded claims only; the raw token
+and signature are never returned, and `/token-echo` refuses anything not issued by the expected org).
+Exchange asset: `h360-obo-token-inspect` (HTTP API).
+
 ### 4. Demo app
 
 ```bash
@@ -134,9 +141,10 @@ separately, never in the repo.
 
 1. Open the app, **Log in with Keycloak / Microsoft Entra ID** as the demo user.
 2. **Top 3 opportunities**: the page says which Salesforce user ran the query.
-3. **Try edit** a deal owned by someone else → ✖ *Insufficient Privileges*; your own → ✔ allowed.
-4. **Create opportunity** → *Created By* / *Owner* = the signed-in user.
-5. Log out, log in as `h360-demo-manager`, repeat: the same calls are now allowed.
+3. **Show tokens**: your IdP token and the Salesforce token the gateway minted for you, decoded side by side.
+4. **Try edit** a deal owned by someone else → ✖ *Insufficient Privileges*; your own → ✔ allowed.
+5. **Create opportunity** → *Created By* / *Owner* = the signed-in user.
+6. Log out, log in as `h360-demo-manager`, repeat: the same calls are now allowed.
 
 Reset the data afterwards: `python3 scripts/reset-demo.py` (dry run), then `--apply`.
 

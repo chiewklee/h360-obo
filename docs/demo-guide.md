@@ -21,13 +21,15 @@ Neither login is a Salesforce admin.
 
 1. Open the demo app and click **Log in with Keycloak**. Sign in as **`h360-demo-user`**.
 2. Click **Top 3 opportunities**. Note the line *"Salesforce ran this query as H360 Demo User"*.
-3. Click **Try edit** on **Q4 Demo Deal** (owned by Chiew Lee) → ✖ **Refused**: *Insufficient Privileges*.
-4. Click **Try edit** on **OBO Demo - Created via Keycloak** (owned by H360 Demo User) → ✔ **Allowed**.
-5. *Optional:* **Create opportunity** with your own name and an amount. The result shows
+3. Click **Show tokens**: on the left, the Keycloak token you logged in with; on the right, the
+   Salesforce token the gateway exchanged it for. Compare `sf_username` (left) with `sub` (right).
+4. Click **Try edit** on **Q4 Demo Deal** (owned by Chiew Lee) → ✖ **Refused**: *Insufficient Privileges*.
+5. Click **Try edit** on **OBO Demo - Created via Keycloak** (owned by H360 Demo User) → ✔ **Allowed**.
+6. *Optional:* **Create opportunity** with your own name and an amount. The result shows
    **Created By / Owner = H360 Demo User**, and it appears in the top 3 if it's big enough.
    Use **Delete** on it afterwards.
-6. Click **Log out**, then log in as **`h360-demo-manager`**.
-7. **Top 3 opportunities** → now *"ran this query as H360 Demo Manager"*. **Try edit** on the
+7. Click **Log out**, then log in as **`h360-demo-manager`**.
+8. **Top 3 opportunities** → now *"ran this query as H360 Demo Manager"*. **Try edit** on the
    Q4 Demo Deal → ✔ **Allowed**.
 
 *Try edit* writes the same amount back, so it never changes the data.
