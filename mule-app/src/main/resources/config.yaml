@@ -21,7 +21,7 @@ h360:
   gatewayPath: "/sfdc-headless-360-obo"
   # Demo-only route: same JWT Validation + OBO policies, upstream = this app's /token-echo,
   # so the page can show the Salesforce token the gateway minted (claims only)
-  inspectPath: "/sfdc-obo-inspect"
+  inspectPath: "/sfdc-obo-inspect/"   # the gateway route needs the trailing slash
   apiVersion: "v66.0"
 
 # Salesforce org whose tokens /token-echo will decode (anything else is refused)
